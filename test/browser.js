@@ -43,8 +43,8 @@ enableDOMLogging({
 
 test('deck.gl', t => {
   require('./modules');
-
-  // Tests currently only work in browser
+  //
+  // // Tests currently only work in browser
   require('./modules/json/json-render.spec');
   require('./modules/main/bundle');
   require('./modules/aggregation-layers/utils/gpu-grid-aggregator.spec');

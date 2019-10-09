@@ -18,31 +18,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-import test from 'tape';
-import {TEST_CASES, WIDTH, HEIGHT} from './test-cases';
-import {SnapshotTestRunner} from '@deck.gl/test-utils';
+import {CompositeLayer, AttributeManager} from '@deck.gl/core';
 
-// import './jupyter-widget';
+export default class GPUGridLayer extends CompositeLayer {
 
-test('Render Test', t => {
-  // tape's default timeout is 500ms
-  t.timeoutAfter(TEST_CASES.length * 2000);
+  updateState(opts) {
+    super.updateState(opts); // wihtout this invalidateAll not called for data change
+    this._updateAttributes(opts.props);
+  }
 
-  new SnapshotTestRunner({width: WIDTH, height: HEIGHT})
-    .add(TEST_CASES)
-    .run({
-      onTestStart: testCase => t.comment(testCase.name),
-      onTestPass: (testCase, result) => t.pass(`match: ${result.matchPercentage}`),
-      onTestFail: (testCase, result) => t.fail(result.error || `match: ${result.matchPercentage}`),
+  // override Composite layer private method to create AttributeManager instance
+  _getAttributeManager() {
+    return new AttributeManager(this.context.gl, {
+      id: this.props.id,
+      stats: this.context.stats
+    });
+  }
 
-      imageDiffOptions: {
-        threshold: 0.99
-        // uncomment to save screenshot to disk
-        // saveOnFail: true,
-        // uncomment `saveAs` to overwrite current golden images
-        // if left commented will be saved as `[name]-fail.png.` enabling comparison
-        // saveAs: '[name].png'
-      }
-    })
-    .then(() => t.end());
-});
+
+}

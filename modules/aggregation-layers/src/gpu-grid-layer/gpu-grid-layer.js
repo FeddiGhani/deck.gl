@@ -19,7 +19,8 @@
 // THE SOFTWARE.
 
 import {PhongMaterial} from '@luma.gl/core';
-import {CompositeLayer, log} from '@deck.gl/core';
+import GL from '@luma.gl/constants';
+import {log} from '@deck.gl/core';
 
 import GPUGridAggregator from '../utils/gpu-grid-aggregation/gpu-grid-aggregator';
 import {AGGREGATION_OPERATION} from '../utils/aggregation-operation-utils';
@@ -27,6 +28,7 @@ import {pointToDensityGridData} from '../utils/gpu-grid-aggregation/grid-aggrega
 import {defaultColorRange, colorRangeToFlatArray} from '../utils/color-utils';
 import GPUGridCellLayer from './gpu-grid-cell-layer';
 import {pointToDensityGridDataCPU} from './../cpu-grid-layer/grid-aggregator';
+import AggregationLayer from '../aggregation-layer';
 
 const defaultMaterial = new PhongMaterial();
 const defaultProps = {
@@ -57,7 +59,7 @@ const defaultProps = {
   gpuAggregation: true
 };
 
-export default class GPUGridLayer extends CompositeLayer {
+export default class GPUGridLayer extends AggregationLayer {
   initializeState() {
     const {gl} = this.context;
     const isSupported = GPUGridAggregator.isSupported(gl);
@@ -71,15 +73,47 @@ export default class GPUGridLayer extends CompositeLayer {
       gpuGridAggregator: new GPUGridAggregator(gl, options),
       isSupported
     };
+    const attributeManager = this.getAttributeManager();
+    attributeManager.add({
+      positions: {size: 3, accessor: 'getPosition', type: GL.DOUBLE, fp64: false},
+      color: {size: 3, accessor: 'getColorWeight'},
+      elevation: {size: 3, accessor: 'getElevationWeight'}
+    });
   }
 
   updateState(opts) {
-    const aggregationFlags = this.getAggregationFlags(opts);
-    if (aggregationFlags) {
-      // aggregate points into grid cells
-      this.getLayerData(aggregationFlags);
+    if (this.state.isSupported === false) {
+      // Skip update, layer not supported
+      return ;
+    }
+    const aggregationChanged = this._isDataChanged(opts);
+    const cellSizeChanged = opts.oldProps.cellSize !== opts.props.cellSize;
+    this.setState({aggregationChanged, cellSizeChanged});
+    // TODO - just run this for all layers
+    super.updateState(opts);
+  }
+
+  updateAttributes(changedAttributes) {
+    let dataChanged = false;
+    // eslint-disable-next-line
+    for (const name in changedAttributes) {
+      // TODO: verify this and simplify _isDataChanged method
+      dataChanged = true;
+      break;
+    }
+
+    if (dataChanged || this.state.aggregationChanged || this.state.cellSizeChanged) {
+      this._getLayerData({
+        dataChanged: dataChanged || this.state.aggregationChanged,
+        cellSizeChanged: this.state.cellSizeChanged
+      });
+
       // reset cached CPU Aggregation results (used for picking)
-      this.setState({gridHash: null});
+      this.setState({
+        aggregationChanged: false,
+        cellSizeChanged: false,
+        gridHash: null
+      });
     }
   }
 
@@ -88,22 +122,7 @@ export default class GPUGridLayer extends CompositeLayer {
     this.state.gpuGridAggregator.delete();
   }
 
-  getAggregationFlags({oldProps, props, changeFlags}) {
-    let aggregationFlags = null;
-    if (!this.state.isSupported) {
-      // Skip update, layer not supported
-      return false;
-    }
-    if (this.isDataChanged({oldProps, props, changeFlags})) {
-      aggregationFlags = Object.assign({}, aggregationFlags, {dataChanged: true});
-    }
-    if (oldProps.cellSize !== props.cellSize) {
-      aggregationFlags = Object.assign({}, aggregationFlags, {cellSizeChanged: true});
-    }
-    return aggregationFlags;
-  }
-
-  isDataChanged({oldProps, props, changeFlags}) {
+  _isDataChanged({oldProps, props, changeFlags}) {
     // Flags affecting aggregation data
     if (changeFlags.dataChanged) {
       return true;
@@ -194,7 +213,7 @@ export default class GPUGridLayer extends CompositeLayer {
     });
   }
 
-  getLayerData(aggregationFlags) {
+  _getLayerData(aggregationFlags) {
     const {
       data,
       cellSize: cellSizeMeters,
@@ -235,7 +254,9 @@ export default class GPUGridLayer extends CompositeLayer {
       gpuGridAggregator: this.state.gpuGridAggregator,
       boundingBox: this.state.boundingBox, // avoid parsing data when it is not changed.
       aggregationFlags,
-      fp64
+      fp64,
+      vertexCount: this.getNumInstances(),
+      attributes: this.getAttributeManager().getAttributes(),
     });
     this.setState({weights, gridSize, gridOrigin, cellSize, boundingBox});
   }

@@ -19,7 +19,6 @@
 // THE SOFTWARE.
 
 import {
-  CompositeLayer,
   WebMercatorViewport,
   createIterable,
   log,
@@ -29,6 +28,7 @@ const {count} = experimental;
 import GPUGridAggregator from '../utils/gpu-grid-aggregation/gpu-grid-aggregator';
 import {AGGREGATION_OPERATION} from '../utils/aggregation-operation-utils';
 import ScreenGridCellLayer from './screen-grid-cell-layer';
+import AggregationLayer from '../aggregation-layer';
 
 import GL from '@luma.gl/constants';
 import {Buffer} from '@luma.gl/core';
@@ -41,7 +41,7 @@ const defaultProps = Object.assign({}, ScreenGridCellLayer.defaultProps, {
   aggregation: 'SUM'
 });
 
-export default class ScreenGridLayer extends CompositeLayer {
+export default class ScreenGridLayer extends AggregationLayer {
   initializeState() {
     const {gl} = this.context;
     if (!ScreenGridCellLayer.isSupported(gl)) {
@@ -63,29 +63,70 @@ export default class ScreenGridLayer extends CompositeLayer {
       weights,
       subLayerData: {attributes: {}}
     });
+    const attributeManager = this.getAttributeManager();
+    attributeManager.add({
+      positions: {size: 3, accessor: 'getPosition', type: GL.DOUBLE, fp64: false},
+      color: {size: 3, accessor: 'getWeight'}
+    });
   }
 
   shouldUpdateState({changeFlags}) {
     return this.state.supported && changeFlags.somethingChanged;
   }
 
-  updateState(opts) {
-    super.updateState(opts);
+  updateState({oldProps, props, changeFlags}) {
 
-    if (opts.changeFlags.dataChanged) {
-      this._processData();
+    // if (opts.changeFlags.dataChanged) {
+    //   this._processData();
+    // }
+
+    // const changeFlags = this._getAggregationChangeFlags(opts);
+    const cellSizeChanged = props.cellSizePixels !== oldProps.cellSizePixels;
+    // props.cellMarginPixels !== oldProps.cellMarginPixels; // _TODO_ why checking margin pixels
+    const aggregationChanged = props.aggregation !== oldProps.aggregation;
+    // const viewportChanged = changeFlags.viewportChanged;
+
+    if (cellSizeChanged || changeFlags.viewportChanged) {
+      this._updateGridParams();
+    }
+    this.setState({
+      cellSizeChanged,
+      aggregationChanged,
+      viewportChanged: changeFlags.viewportChanged
+    });
+
+    // if (changeFlags) {
+    //   const {pointCount} = this.state;
+    //   if (pointCount > 0) {
+    //     this._updateAggregation(changeFlags);
+    //   }
+    // }
+
+    super.updateState({oldProps, props, changeFlags});
+
+  }
+
+  updateAttributes(changedAttributes) {
+    let dataChanged = false;
+    // eslint-disable-next-line
+    for (const name in changedAttributes) {
+      // TODO: verify this and simplify isDataChanged method
+      dataChanged = true;
+      break;
     }
 
-    const changeFlags = this._getAggregationChangeFlags(opts);
-
-    if (changeFlags) {
-      if (changeFlags.cellSizeChanged || changeFlags.viewportChanged) {
-        this._updateGridParams();
-      }
-      const {pointCount} = this.state;
-      if (pointCount > 0) {
-        this._updateAggregation(changeFlags);
-      }
+    const {cellSizeChanged, aggregationChanged, viewportChanged} = this.state
+    if (dataChanged || aggregationChanged || cellSizeChanged || viewportChanged) {
+      this._updateAggregation({
+        dataChanged: dataChanged || aggregationChanged,
+        cellSizeChanged,
+        viewportChanged
+      });
+      this.setState({
+        cellSizeChanged: false,
+        aggregationChanged: false,
+        viewportChanged: false
+      });
     }
   }
 
@@ -93,7 +134,7 @@ export default class ScreenGridLayer extends CompositeLayer {
     if (!this.state.supported) {
       return [];
     }
-    const {maxTexture, numInstances, subLayerData} = this.state;
+    const {maxTexture, cellCount, subLayerData} = this.state;
     const {updateTriggers} = this.props;
 
     return new ScreenGridCellLayer(
@@ -105,7 +146,7 @@ export default class ScreenGridLayer extends CompositeLayer {
       {
         data: subLayerData,
         maxTexture,
-        numInstances
+        numInstances: cellCount
       }
     );
   }
@@ -159,37 +200,42 @@ export default class ScreenGridLayer extends CompositeLayer {
   }
 
   // Process 'data' and build positions and weights Arrays.
-  _processData() {
-    const {data, getPosition, getWeight} = this.props;
-    const pointCount = count(data);
-    const positions = new Float64Array(pointCount * 2);
-    const colorWeights = new Float32Array(pointCount * 3);
-    const {weights} = this.state;
-
-    const {iterable, objectInfo} = createIterable(data);
-    for (const object of iterable) {
-      objectInfo.index++;
-      const position = getPosition(object, objectInfo);
-      const weight = getWeight(object, objectInfo);
-      const {index} = objectInfo;
-
-      positions[index * 2] = position[0];
-      positions[index * 2 + 1] = position[1];
-
-      if (Array.isArray(weight)) {
-        colorWeights[index * 3] = weight[0];
-        colorWeights[index * 3 + 1] = weight[1];
-        colorWeights[index * 3 + 2] = weight[2];
-      } else {
-        // backward compitability
-        colorWeights[index * 3] = weight;
-      }
-    }
-    weights.color.values = colorWeights;
-    this.setState({positions, pointCount});
-  }
+  // _processData() {
+  //   const {data, getPosition, getWeight} = this.props;
+  //   const pointCount = count(data);
+  //   const positions = new Float64Array(pointCount * 2);
+  //   const colorWeights = new Float32Array(pointCount * 3);
+  //   const {weights} = this.state;
+  //
+  //   const {iterable, objectInfo} = createIterable(data);
+  //   for (const object of iterable) {
+  //     objectInfo.index++;
+  //     const position = getPosition(object, objectInfo);
+  //     const weight = getWeight(object, objectInfo);
+  //     const {index} = objectInfo;
+  //
+  //     positions[index * 2] = position[0];
+  //     positions[index * 2 + 1] = position[1];
+  //
+  //     if (Array.isArray(weight)) {
+  //       colorWeights[index * 3] = weight[0];
+  //       colorWeights[index * 3 + 1] = weight[1];
+  //       colorWeights[index * 3 + 2] = weight[2];
+  //     } else {
+  //       // backward compitability
+  //       colorWeights[index * 3] = weight;
+  //     }
+  //   }
+  //   weights.color.values = colorWeights;
+  //   this.setState({positions, pointCount});
+  // }
 
   _updateAggregation(changeFlags) {
+    const vertexCount = this.getNumInstances();
+    if (vertexCount <= 0) {
+      return;
+    }
+
     const {cellSizePixels, gpuAggregation} = this.props;
 
     const {positions, weights} = this.state;
@@ -217,7 +263,9 @@ export default class ScreenGridLayer extends CompositeLayer {
       changeFlags,
       useGPU: gpuAggregation,
       projectPoints,
-      gridTransformMatrix
+      gridTransformMatrix,
+      vertexCount,
+      attributes: this.getAttributeManager().getAttributes()
     });
 
     this.setState({maxTexture: results.color.maxTexture});
@@ -230,8 +278,8 @@ export default class ScreenGridLayer extends CompositeLayer {
 
     const numCol = Math.ceil(width / cellSizePixels);
     const numRow = Math.ceil(height / cellSizePixels);
-    const numInstances = numCol * numRow;
-    const dataBytes = numInstances * 4 * 4;
+    const cellCount = numCol * numRow;
+    const dataBytes = cellCount * 4 * 4;
     let aggregationBuffer = this.state.aggregationBuffer;
     if (aggregationBuffer) {
       aggregationBuffer.delete();
@@ -248,7 +296,7 @@ export default class ScreenGridLayer extends CompositeLayer {
     this.state.weights.color.aggregationBuffer = aggregationBuffer;
     this.state.subLayerData.attributes.instanceCounts = aggregationBuffer;
     this.setState({
-      numInstances,
+      cellCount,
       aggregationBuffer
     });
   }

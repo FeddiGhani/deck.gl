@@ -19,12 +19,13 @@
 // THE SOFTWARE.
 
 import {equals} from 'math.gl';
-import {CompositeLayer} from '@deck.gl/core';
 import {LineLayer, SolidPolygonLayer} from '@deck.gl/layers';
+import GL from '@luma.gl/constants';
 import {generateContours} from './contour-utils';
 
 import GPUGridAggregator from '../utils/gpu-grid-aggregation/gpu-grid-aggregator';
 import {pointToDensityGridData} from '../utils/gpu-grid-aggregation/grid-aggregation-utils';
+import AggregationLayer from '../aggregation-layer';
 
 const DEFAULT_COLOR = [255, 255, 255, 255];
 const DEFAULT_STROKE_WIDTH = 1;
@@ -43,43 +44,78 @@ const defaultProps = {
   zOffset: 0.005
 };
 
-export default class ContourLayer extends CompositeLayer {
+export default class ContourLayer extends AggregationLayer {
   initializeState() {
     const {gl} = this.context;
     const options = {
       id: `${this.id}-gpu-aggregator`
     };
-    this.state = {
+    this.setState({
       contourData: {},
       gridAggregator: new GPUGridAggregator(gl, options),
       colorTrigger: 0,
       strokeWidthTrigger: 0
-    };
+    });
+    const attributeManager = this.getAttributeManager();
+    attributeManager.add({
+      positions: {size: 3, accessor: 'getPosition', type: GL.DOUBLE, fp64: false},
+      count: {size: 3, accessor: 'getWeight'}
+    });
   }
 
-  updateState({oldProps, props, changeFlags}) {
+  updateState(opts) {
+    // const aggregationFlags = this._getAggregationFlags({oldProps, props, changeFlags});
+    const aggregationChanged = this._isDataChanged(opts);
+    const cellSizeChanged = opts.oldProps.cellSize !== opts.props.cellSize;
+    if(this._shouldRebuildContours(opts)) {
+      this._updateThresholdData(opts.props);
+      this.setState({contoursDirty: true});
+    } else if (!aggregationChanged && !cellSizeChanged) {
+        // data for sublayers not changed check if color or strokeWidth need to be updated
+        this._updateSubLayerTriggers(opts.oldProps, opts.props);
+    }
+
+    this.setState({aggregationChanged, cellSizeChanged});
+    super.updateState(opts);
+  }
+
+  updateAttributes(changedAttributes) {
     let dataChanged = false;
-    let contoursChanged = false;
-    const aggregationFlags = this._getAggregationFlags({oldProps, props, changeFlags});
-    if (aggregationFlags) {
+    // eslint-disable-next-line
+    for (const name in changedAttributes) {
+      // TODO: verify this and simplify isDataChanged method
       dataChanged = true;
+      break;
+    }
+
+    // if (aggregationFlags) {
+    //   dataChanged = true;
+    //   // Clear countsData cache
+    //   this.setState({countsData: null});
+    //   this._aggregateData(aggregationFlags);
+    // }
+
+    if (dataChanged || this.state.aggregationChanged || this.state.cellSizeChanged) {
+      dataChanged = true;
+      this._aggregateData({
+        dataChanged: dataChanged || this.state.aggregationChanged,
+        cellSizeChanged: this.state.cellSizeChanged
+      });
       // Clear countsData cache
-      this.setState({countsData: null});
-      this._aggregateData(aggregationFlags);
+      this.setState({
+        aggregationChanged: false,
+        cellSizeChanged: false,
+        countsData: null
+      });
     }
 
-    if (this._shouldRebuildContours({oldProps, props})) {
-      contoursChanged = true;
-      this._updateThresholdData(props);
-    }
-
-    if (dataChanged || contoursChanged) {
+    if (dataChanged || this.state.contoursDirty) {
       this._generateContours();
-    } else {
-      // data for sublayers not changed check if color or strokeWidth need to be updated
-      this._updateSubLayerTriggers(oldProps, props);
+      this.setState({contoursDirty: false});
     }
+
   }
+
 
   finalizeState() {
     super.finalizeState();
@@ -103,7 +139,7 @@ export default class ContourLayer extends CompositeLayer {
     const {
       data,
       cellSize: cellSizeMeters,
-      getPosition,
+      // getPosition,
       getWeight,
       gpuAggregation,
       fp64,
@@ -112,7 +148,7 @@ export default class ContourLayer extends CompositeLayer {
     const {weights, gridSize, gridOrigin, cellSize, boundingBox} = pointToDensityGridData({
       data,
       cellSizeMeters,
-      getPosition,
+      // getPosition,
       weightParams: {count: {getWeight}},
       gpuAggregation,
       gpuGridAggregator: this.state.gridAggregator,
@@ -120,7 +156,9 @@ export default class ContourLayer extends CompositeLayer {
       coordinateSystem,
       viewport: this.context.viewport,
       boundingBox: this.state.boundingBox, // avoid parsing data when it is not changed.
-      aggregationFlags
+      aggregationFlags,
+      vertexCount: this.getNumInstances(),
+      attributes: this.getAttributeManager().getAttributes()
     });
 
     this.setState({
@@ -156,20 +194,32 @@ export default class ContourLayer extends CompositeLayer {
     this.setState({contourData});
   }
 
-  _getAggregationFlags({oldProps, props, changeFlags}) {
-    let aggregationFlags = null;
+  // _getAggregationFlags({oldProps, props, changeFlags}) {
+  //   let aggregationFlags = null;
+  //   if (
+  //     changeFlags.dataChanged ||
+  //     oldProps.gpuAggregation !== props.gpuAggregation ||
+  //     (changeFlags.updateTriggersChanged &&
+  //       (changeFlags.updateTriggersChanged.all || changeFlags.updateTriggersChanged.getPosition))
+  //   ) {
+  //     aggregationFlags = Object.assign({}, aggregationFlags, {dataChanged: true});
+  //   }
+  //   if (oldProps.cellSize !== props.cellSize) {
+  //     aggregationFlags = Object.assign({}, aggregationFlags, {cellSizeChanged: true});
+  //   }
+  //   return aggregationFlags;
+  // }
+
+  _isDataChanged({oldProps, props, changeFlags}) {
     if (
       changeFlags.dataChanged ||
       oldProps.gpuAggregation !== props.gpuAggregation ||
       (changeFlags.updateTriggersChanged &&
         (changeFlags.updateTriggersChanged.all || changeFlags.updateTriggersChanged.getPosition))
     ) {
-      aggregationFlags = Object.assign({}, aggregationFlags, {dataChanged: true});
+      return true;
     }
-    if (oldProps.cellSize !== props.cellSize) {
-      aggregationFlags = Object.assign({}, aggregationFlags, {cellSizeChanged: true});
-    }
-    return aggregationFlags;
+    return false;
   }
 
   _getLineLayerProps() {

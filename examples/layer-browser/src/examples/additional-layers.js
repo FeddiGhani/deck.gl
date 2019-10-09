@@ -27,7 +27,8 @@ const GRID_LAYER_PROPS_OBJECT = {
 };
 
 const GPU_GRID_LAYER_PROPS_OBJECT = Object.assign({}, GRID_LAYER_PROPS_OBJECT, {
-  id: 'gpu-grid-layer'
+  id: 'gpu-grid-layer',
+  gpuAggregation: true // false
 });
 
 const GRID_LAYER_PROPS = {
