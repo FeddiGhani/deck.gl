@@ -538,19 +538,16 @@ export default class Layer extends Component {
 
     // First Check if app has provided an explicit value
     if (props.numInstances !== undefined) {
-      console.log(`numInstances: ${props.numInstances} from props`);
       return props.numInstances;
     }
 
     // Second check if the layer has set its own value
     if (this.state && this.state.numInstances !== undefined) {
-      console.log(`numInstances: ${this.state.numInstances} from state`);
       return this.state.numInstances;
     }
 
     // Use container library to get a count for any ES6 container or object
     const {data} = this.props;
-    console.log(`numInstances: ${count(data)} from data`);
     return count(data);
   }
 

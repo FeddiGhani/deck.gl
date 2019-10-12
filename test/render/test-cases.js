@@ -1559,16 +1559,4 @@ export const TEST_CASES = [
     ],
     goldenImage: './test/render/golden-images/s2-layer-l2.png'
   }
-].filter(tc => [
-  'gpu-grid-lnglat',
-  'gpu-grid-lnglat-cpu-aggregation',
-  'contour-infoviz',
-  'contour-isobands-infoviz',
-  'contour-lnglat-cpu-aggregation',
-  'contour-lnglat',
-  'contour-isobands-lnglat',
-  'screengrid-infoviz',
-  'screengrid-lnglat-cpu-aggregation',
-  'screengrid-lnglat-colorRange'
-].includes(tc.name));
-// ].filter(tc => ['gpu-grid-lnglat'].includes(tc.name));
+];
